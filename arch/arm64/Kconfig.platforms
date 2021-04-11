@@ -29,6 +29,25 @@ config ARCH_ALPINE
 	  This enables support for the Annapurna Labs Alpine
 	  Soc family.
 
+config ARCH_BAIKAL
+	bool "Baikal Electronics Baikal-M SoC Family"
+	select GPIOLIB
+	select PINCTRL
+	select OF_GPIO
+	select I2C_BAIKAL_SMBUS
+	select GPIO_SYSFS
+	select GPIO_DWAPB
+	select GPIO_GENERIC
+	select STMMAC_ETH
+	select STMMAC_PLATFORM
+	select PHYLIB
+	select SPI_DESIGNWARE
+	select SPI_DW_MMIO
+	select DW_APB_TIMER
+	select DW_APB_TIMER_OF
+	help
+	  This enables support for Baikal Electronics Baikal-M SoC Family
+
 config ARCH_BCM2835
 	bool "Broadcom BCM2835 family"
 	select TIMER_OF
@@ -292,6 +311,18 @@ config ARCH_ZX
 	select PINCTRL
 	help
 	  This enables support for ZTE ZX SoC Family
+
+# The GPIO number here must be sorted by descending number.
+# In a case of multiplatform kernel we want the highest value
+# required by selected platforms
+config ARCH_NR_GPIO
+    int
+    default 64 if ARCH_BAIKAL
+    default 0
+    help
+      Maximum number of GPIOs in the system.
+
+      If unsure, leave the default value.
 
 config ARCH_ZYNQMP
 	bool "Xilinx ZynqMP Family"
