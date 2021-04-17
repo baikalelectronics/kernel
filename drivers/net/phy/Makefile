@@ -94,4 +94,5 @@ obj-$(CONFIG_STE10XP)		+= ste10Xp.o
 obj-$(CONFIG_TERANETICS_PHY)	+= teranetics.o
 obj-$(CONFIG_VITESSE_PHY)	+= vitesse.o
 obj-$(CONFIG_XILINX_GMII2RGMII) += xilinx_gmii2rgmii.o
-obj-$(CONFIG_BAIKAL_MDIO)	+= mdio-be-gpio.o
+obj-$(CONFIG_BAIKAL_MDIO)       += mdio-be-gpio.o
+obj-$(CONFIG_88X2222_PHY)       += mv88x2222.o

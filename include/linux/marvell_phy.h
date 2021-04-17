@@ -22,6 +22,8 @@
 #define MARVELL_PHY_ID_88E3016		0x01410e60
 #define MARVELL_PHY_ID_88X3310		0x002b09a0
 #define MARVELL_PHY_ID_88E2110		0x002b09b0
+#define MARVELL_PHY_ID_88X2222          0x01410f10
+#define MARVELL_PHY_ID_88X2222R         0x014131b0
 
 /* The MV88e6390 Ethernet switch contains embedded PHYs. These PHYs do
  * not have a model ID. So the switch driver traps reads to the ID2
