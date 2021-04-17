@@ -19,9 +19,7 @@
 #define BOUNDARY_OK(addr, len) \
 	((addr | (SZ_128M - 1)) == ((addr + len - 1) | (SZ_128M - 1)))
 
-struct dwcmshc_priv {
-	struct clk	*bus_clk;
-};
+#define MSHC_INPUT_DIVIDER 2  /* mshc_tx_x2 to mshc_tx divider */
 
 /*
  * If DMA addr spans 128MB boundary, we split the DMA transfer into two
@@ -46,11 +44,17 @@ static void dwcmshc_adma_write_desc(struct sdhci_host *host, void **desc,
 	sdhci_adma_write_desc(host, desc, addr, len, cmd);
 }
 
+static unsigned int dwcmshc_get_max_clock (struct sdhci_host *host)
+{
+	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
+	return clk_get_rate(pltfm_host->clk) / MSHC_INPUT_DIVIDER;
+}
+
 static const struct sdhci_ops sdhci_dwcmshc_ops = {
 	.set_clock		= sdhci_set_clock,
 	.set_bus_width		= sdhci_set_bus_width,
 	.set_uhs_signaling	= sdhci_set_uhs_signaling,
-	.get_max_clock		= sdhci_pltfm_clk_get_max_clock,
+	.get_max_clock		= dwcmshc_get_max_clock,
 	.reset			= sdhci_reset,
 	.adma_write_desc	= dwcmshc_adma_write_desc,
 };
@@ -58,6 +62,7 @@ static const struct sdhci_ops sdhci_dwcmshc_ops = {
 static const struct sdhci_pltfm_data sdhci_dwcmshc_pdata = {
 	.ops = &sdhci_dwcmshc_ops,
 	.quirks = SDHCI_QUIRK_CAP_CLOCK_BASE_BROKEN,
+	.quirks2 = SDHCI_QUIRK2_PRESET_VALUE_BROKEN | SDHCI_QUIRK2_BROKEN_64_BIT_DMA_MASK,
 };
 
 static int dwcmshc_probe(struct platform_device *pdev)
@@ -67,9 +72,9 @@ static int dwcmshc_probe(struct platform_device *pdev)
 	struct dwcmshc_priv *priv;
 	int err;
 	u32 extra;
+	u32 max;
 
-	host = sdhci_pltfm_init(pdev, &sdhci_dwcmshc_pdata,
-				sizeof(struct dwcmshc_priv));
+	host = sdhci_pltfm_init(pdev, &sdhci_dwcmshc_pdata, 0);
 	if (IS_ERR(host))
 		return PTR_ERR(host);
 
@@ -90,13 +95,14 @@ static int dwcmshc_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "failed to get core clk: %d\n", err);
 		goto free_pltfm;
 	}
+
+	if (device_property_read_u32(&pdev->dev, "max-frequency", &max) < 0)
+		max = 10000000;
+	clk_set_rate(pltfm_host->clk, max * MSHC_INPUT_DIVIDER);
+
 	err = clk_prepare_enable(pltfm_host->clk);
 	if (err)
 		goto free_pltfm;
-
-	priv->bus_clk = devm_clk_get(&pdev->dev, "bus");
-	if (!IS_ERR(priv->bus_clk))
-		clk_prepare_enable(priv->bus_clk);
 
 	err = mmc_of_parse(host->mmc);
 	if (err)
@@ -112,7 +118,6 @@ static int dwcmshc_probe(struct platform_device *pdev)
 
 err_clk:
 	clk_disable_unprepare(pltfm_host->clk);
-	clk_disable_unprepare(priv->bus_clk);
 free_pltfm:
 	sdhci_pltfm_free(pdev);
 	return err;
@@ -122,12 +127,10 @@ static int dwcmshc_remove(struct platform_device *pdev)
 {
 	struct sdhci_host *host = platform_get_drvdata(pdev);
 	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
-	struct dwcmshc_priv *priv = sdhci_pltfm_priv(pltfm_host);
 
 	sdhci_remove_host(host, 0);
 
 	clk_disable_unprepare(pltfm_host->clk);
-	clk_disable_unprepare(priv->bus_clk);
 
 	sdhci_pltfm_free(pdev);
 
