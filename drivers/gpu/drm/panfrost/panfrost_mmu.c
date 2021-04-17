@@ -31,7 +31,7 @@ static int wait_ready(struct panfrost_device *pfdev, u32 as_nr)
 	/* Wait for the MMU status to indicate there is no active command, in
 	 * case one is pending. */
 	ret = readl_relaxed_poll_timeout_atomic(pfdev->iomem + AS_STATUS(as_nr),
-		val, !(val & AS_STATUS_AS_ACTIVE), 10, 1000);
+		val, !(val & AS_STATUS_AS_ACTIVE), 3, 1000);
 
 	if (ret)
 		dev_err(pfdev->dev, "AS_ACTIVE bit stuck\n");
@@ -64,13 +64,21 @@ static void lock_region(struct panfrost_device *pfdev, u32 as_nr,
 	 * results in the range (11 .. 42)
 	 */
 
-	size = round_up(size, PAGE_SIZE);
-
-	region_width = 10 + fls(size >> PAGE_SHIFT);
-	if ((size >> PAGE_SHIFT) != (1ul << (region_width - 11))) {
-		/* not pow2, so must go up to the next pow2 */
-		region_width += 1;
+	if (size & ~PAGE_MASK)
+		size = (size >> PAGE_SHIFT) + 1;
+	else
+		size = size >> PAGE_SHIFT;
+	region_width = 10;
+	if (size > 0x80000000) {
+		if (size & 0xffffffff)
+			size = (size >> 32) + 1;
+		else
+			size = size >> 32;
+		region_width += 32;
 	}
+	region_width += fls(size);
+	if (size != (1ul << ((region_width - 11) & 0x1f)))
+		region_width++;
 	region |= region_width;
 
 	/* Lock the region that needs to be updated */
@@ -115,7 +123,7 @@ static void panfrost_mmu_enable(struct panfrost_device *pfdev, struct panfrost_m
 	u64 transtab = cfg->arm_mali_lpae_cfg.transtab;
 	u64 memattr = cfg->arm_mali_lpae_cfg.memattr;
 
-	mmu_hw_do_operation_locked(pfdev, as_nr, 0, ~0UL, AS_COMMAND_FLUSH_MEM);
+	mmu_hw_do_operation_locked(pfdev, as_nr, 0, 1ULL << 48, AS_COMMAND_FLUSH_MEM);
 
 	mmu_write(pfdev, AS_TRANSTAB_LO(as_nr), transtab & 0xffffffffUL);
 	mmu_write(pfdev, AS_TRANSTAB_HI(as_nr), transtab >> 32);
@@ -123,6 +131,10 @@ static void panfrost_mmu_enable(struct panfrost_device *pfdev, struct panfrost_m
 	/* Need to revisit mem attrs.
 	 * NC is the default, Mali driver is inner WT.
 	 */
+	if (pfdev->features.id == 0x620) {
+		memattr &= ~0xf0f0f0ULL;
+		memattr |= 0x404040;
+	}
 	mmu_write(pfdev, AS_MEMATTR_LO(as_nr), memattr & 0xffffffffUL);
 	mmu_write(pfdev, AS_MEMATTR_HI(as_nr), memattr >> 32);
 
@@ -186,7 +198,7 @@ u32 panfrost_mmu_as_get(struct panfrost_device *pfdev, struct panfrost_mmu *mmu)
 	atomic_set(&mmu->as_count, 1);
 	list_add(&mmu->list, &pfdev->as_lru_list);
 
-	dev_dbg(pfdev->dev, "Assigned AS%d to mmu %p, alloc_mask=%lx", as, mmu, pfdev->as_alloc_mask);
+	dev_dbg(pfdev->dev, "Assigned AS%d to mmu %px, alloc_mask=%lx", as, mmu, pfdev->as_alloc_mask);
 
 	panfrost_mmu_enable(pfdev, mmu);
 
@@ -287,6 +299,8 @@ int panfrost_mmu_map(struct panfrost_gem_mapping *mapping)
 
 	if (bo->noexec)
 		prot |= IOMMU_NOEXEC;
+	if (bo->is_heap)
+		prot |= IOMMU_CACHE;
 
 	sgt = drm_gem_shmem_get_pages_sgt(obj);
 	if (WARN_ON(IS_ERR(sgt)))
