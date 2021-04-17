@@ -10,6 +10,12 @@ menuconfig MDIO_DEVICE
 
 if MDIO_DEVICE
 
+config BAIKAL_MDIO
+	tristate "Driver for the Baikal Electronics GPIO MDIO bus"
+	depends on OF && GPIOLIB && MDIO_BITBANG
+	---help---
+	   Support for Baikal Electronics GPIO MDIO bus
+
 config MDIO_BUS
 	tristate
 	default m if PHYLIB=m
