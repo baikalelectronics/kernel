@@ -1,6 +1,17 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
+ * Baikal Electronics BE-M1000 DesignWare HDMI AHB audio driver
+ *
+ * Copyright (C) 2020 Baikal Electronics JSC
+ *
+ * Author: Pavel Parkhomenko <Pavel.Parkhomenko@baikalelectronics.ru>
+ *
+ * Parts of this file were based on sources as follows:
+ *
  * DesignWare HDMI audio driver
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  *
  * Written and tested against the Designware HDMI Tx found in iMX6.
  */
@@ -22,12 +33,15 @@
 
 #define DRIVER_NAME "dw-hdmi-ahb-audio"
 
+#define BAIKAL_HDMI_REG_SHIFT  2
+
 /* Provide some bits rather than bit offsets */
 enum {
 	HDMI_AHB_DMA_CONF0_SW_FIFO_RST = BIT(7),
 	HDMI_AHB_DMA_CONF0_EN_HLOCK = BIT(3),
 	HDMI_AHB_DMA_START_START = BIT(0),
 	HDMI_AHB_DMA_STOP_STOP = BIT(0),
+	HDMI_IH_MUTE_AHBDMAAUD_STAT0_OVERRUN = BIT(6),
 	HDMI_IH_MUTE_AHBDMAAUD_STAT0_ERROR = BIT(5),
 	HDMI_IH_MUTE_AHBDMAAUD_STAT0_LOST = BIT(4),
 	HDMI_IH_MUTE_AHBDMAAUD_STAT0_RETRY = BIT(3),
@@ -35,12 +49,14 @@ enum {
 	HDMI_IH_MUTE_AHBDMAAUD_STAT0_BUFFFULL = BIT(1),
 	HDMI_IH_MUTE_AHBDMAAUD_STAT0_BUFFEMPTY = BIT(0),
 	HDMI_IH_MUTE_AHBDMAAUD_STAT0_ALL =
+		HDMI_IH_MUTE_AHBDMAAUD_STAT0_OVERRUN |
 		HDMI_IH_MUTE_AHBDMAAUD_STAT0_ERROR |
 		HDMI_IH_MUTE_AHBDMAAUD_STAT0_LOST |
 		HDMI_IH_MUTE_AHBDMAAUD_STAT0_RETRY |
 		HDMI_IH_MUTE_AHBDMAAUD_STAT0_DONE |
 		HDMI_IH_MUTE_AHBDMAAUD_STAT0_BUFFFULL |
 		HDMI_IH_MUTE_AHBDMAAUD_STAT0_BUFFEMPTY,
+	HDMI_IH_AHBDMAAUD_STAT0_OVERRUN = BIT(6),
 	HDMI_IH_AHBDMAAUD_STAT0_ERROR = BIT(5),
 	HDMI_IH_AHBDMAAUD_STAT0_LOST = BIT(4),
 	HDMI_IH_AHBDMAAUD_STAT0_RETRY = BIT(3),
@@ -48,6 +64,7 @@ enum {
 	HDMI_IH_AHBDMAAUD_STAT0_BUFFFULL = BIT(1),
 	HDMI_IH_AHBDMAAUD_STAT0_BUFFEMPTY = BIT(0),
 	HDMI_IH_AHBDMAAUD_STAT0_ALL =
+		HDMI_IH_AHBDMAAUD_STAT0_OVERRUN |
 		HDMI_IH_AHBDMAAUD_STAT0_ERROR |
 		HDMI_IH_AHBDMAAUD_STAT0_LOST |
 		HDMI_IH_AHBDMAAUD_STAT0_RETRY |
@@ -63,6 +80,10 @@ enum {
 	HDMI_REVISION_ID = 0x0001,
 	HDMI_IH_AHBDMAAUD_STAT0 = 0x0109,
 	HDMI_IH_MUTE_AHBDMAAUD_STAT0 = 0x0189,
+	HDMI_FC_AUDICONF2 = 0x1027,
+	HDMI_FC_AUDSCONF = 0x1063,
+	HDMI_FC_AUDSCONF_LAYOUT1 = 1 << 0,
+	HDMI_FC_AUDSCONF_LAYOUT0 = 0 << 0,
 	HDMI_AHB_DMA_CONF0 = 0x3600,
 	HDMI_AHB_DMA_START = 0x3601,
 	HDMI_AHB_DMA_STOP = 0x3602,
@@ -132,12 +153,27 @@ struct snd_dw_hdmi {
 	u8 cs[192][8];
 };
 
-static void dw_hdmi_writel(u32 val, void __iomem *ptr)
+static inline void baikal_hdmi_writeb(u8 val, void __iomem *base, uint offset)
 {
-	writeb_relaxed(val, ptr);
-	writeb_relaxed(val >> 8, ptr + 1);
-	writeb_relaxed(val >> 16, ptr + 2);
-	writeb_relaxed(val >> 24, ptr + 3);
+	writeb(val, base + (offset << BAIKAL_HDMI_REG_SHIFT));
+}
+
+static inline void baikal_hdmi_writeb_relaxed(u8 val, void __iomem *base, uint offset)
+{
+	writeb_relaxed(val, base + (offset << BAIKAL_HDMI_REG_SHIFT));
+}
+
+static inline u8 baikal_hdmi_readb_relaxed(void __iomem *base, uint offset)
+{
+	return readb_relaxed(base + (offset << BAIKAL_HDMI_REG_SHIFT));
+}
+
+static void baikal_hdmi_writel(u32 val, void __iomem *base, uint offset)
+{
+	writeb_relaxed(val, base + (offset << BAIKAL_HDMI_REG_SHIFT));
+	writeb_relaxed(val >> 8, base + ((offset + 1) << BAIKAL_HDMI_REG_SHIFT));
+	writeb_relaxed(val >> 16, base + ((offset + 2) << BAIKAL_HDMI_REG_SHIFT));
+	writeb_relaxed(val >> 24, base + ((offset + 3) << BAIKAL_HDMI_REG_SHIFT));
 }
 
 /*
@@ -240,18 +276,18 @@ static void dw_hdmi_start_dma(struct snd_dw_hdmi *dw)
 	dw->reformat(dw, offset, period);
 
 	/* Clear all irqs before enabling irqs and starting DMA */
-	writeb_relaxed(HDMI_IH_AHBDMAAUD_STAT0_ALL,
-		       base + HDMI_IH_AHBDMAAUD_STAT0);
+	baikal_hdmi_writeb_relaxed(HDMI_IH_AHBDMAAUD_STAT0_ALL,
+		       base, HDMI_IH_AHBDMAAUD_STAT0);
 
 	start = dw->buf_addr + offset;
 	stop = start + period - 1;
 
 	/* Setup the hardware start/stop addresses */
-	dw_hdmi_writel(start, base + HDMI_AHB_DMA_STRADDR0);
-	dw_hdmi_writel(stop, base + HDMI_AHB_DMA_STPADDR0);
+	baikal_hdmi_writel(start, base, HDMI_AHB_DMA_STRADDR0);
+	baikal_hdmi_writel(stop, base, HDMI_AHB_DMA_STPADDR0);
 
-	writeb_relaxed((u8)~HDMI_AHB_DMA_MASK_DONE, base + HDMI_AHB_DMA_MASK);
-	writeb(HDMI_AHB_DMA_START_START, base + HDMI_AHB_DMA_START);
+	baikal_hdmi_writeb_relaxed((u8)~HDMI_AHB_DMA_MASK_DONE, base, HDMI_AHB_DMA_MASK);
+	baikal_hdmi_writeb(HDMI_AHB_DMA_START_START, base, HDMI_AHB_DMA_START);
 
 	offset += period;
 	if (offset >= dw->buf_size)
@@ -262,8 +298,8 @@ static void dw_hdmi_start_dma(struct snd_dw_hdmi *dw)
 static void dw_hdmi_stop_dma(struct snd_dw_hdmi *dw)
 {
 	/* Disable interrupts before disabling DMA */
-	writeb_relaxed(~0, dw->data.base + HDMI_AHB_DMA_MASK);
-	writeb_relaxed(HDMI_AHB_DMA_STOP_STOP, dw->data.base + HDMI_AHB_DMA_STOP);
+	baikal_hdmi_writeb_relaxed(~0, dw->data.base, HDMI_AHB_DMA_MASK);
+	baikal_hdmi_writeb_relaxed(HDMI_AHB_DMA_STOP_STOP, dw->data.base, HDMI_AHB_DMA_STOP);
 }
 
 static irqreturn_t snd_dw_hdmi_irq(int irq, void *data)
@@ -272,11 +308,11 @@ static irqreturn_t snd_dw_hdmi_irq(int irq, void *data)
 	struct snd_pcm_substream *substream;
 	unsigned stat;
 
-	stat = readb_relaxed(dw->data.base + HDMI_IH_AHBDMAAUD_STAT0);
+	stat = baikal_hdmi_readb_relaxed(dw->data.base, HDMI_IH_AHBDMAAUD_STAT0);
 	if (!stat)
 		return IRQ_NONE;
 
-	writeb_relaxed(stat, dw->data.base + HDMI_IH_AHBDMAAUD_STAT0);
+	baikal_hdmi_writeb_relaxed(stat, dw->data.base, HDMI_IH_AHBDMAAUD_STAT0);
 
 	substream = dw->substream;
 	if (stat & HDMI_IH_AHBDMAAUD_STAT0_DONE && substream) {
@@ -345,16 +381,16 @@ static int dw_hdmi_open(struct snd_pcm_substream *substream)
 		return ret;
 
 	/* Clear FIFO */
-	writeb_relaxed(HDMI_AHB_DMA_CONF0_SW_FIFO_RST,
-		       base + HDMI_AHB_DMA_CONF0);
+	baikal_hdmi_writeb_relaxed(HDMI_AHB_DMA_CONF0_SW_FIFO_RST,
+		       base, HDMI_AHB_DMA_CONF0);
 
 	/* Configure interrupt polarities */
-	writeb_relaxed(~0, base + HDMI_AHB_DMA_POL);
-	writeb_relaxed(~0, base + HDMI_AHB_DMA_BUFFPOL);
+	baikal_hdmi_writeb_relaxed(~0, base, HDMI_AHB_DMA_POL);
+	baikal_hdmi_writeb_relaxed(~0, base, HDMI_AHB_DMA_BUFFPOL);
 
 	/* Keep interrupts masked, and clear any pending */
-	writeb_relaxed(~0, base + HDMI_AHB_DMA_MASK);
-	writeb_relaxed(~0, base + HDMI_IH_AHBDMAAUD_STAT0);
+	baikal_hdmi_writeb_relaxed(~0, base, HDMI_AHB_DMA_MASK);
+	baikal_hdmi_writeb_relaxed(~0, base, HDMI_IH_AHBDMAAUD_STAT0);
 
 	ret = request_irq(dw->data.irq, snd_dw_hdmi_irq, IRQF_SHARED,
 			  "dw-hdmi-audio", dw);
@@ -362,9 +398,9 @@ static int dw_hdmi_open(struct snd_pcm_substream *substream)
 		return ret;
 
 	/* Un-mute done interrupt */
-	writeb_relaxed(HDMI_IH_MUTE_AHBDMAAUD_STAT0_ALL &
+	baikal_hdmi_writeb_relaxed(HDMI_IH_MUTE_AHBDMAAUD_STAT0_ALL &
 		       ~HDMI_IH_MUTE_AHBDMAAUD_STAT0_DONE,
-		       base + HDMI_IH_MUTE_AHBDMAAUD_STAT0);
+		       base, HDMI_IH_MUTE_AHBDMAAUD_STAT0);
 
 	return 0;
 }
@@ -374,8 +410,8 @@ static int dw_hdmi_close(struct snd_pcm_substream *substream)
 	struct snd_dw_hdmi *dw = substream->private_data;
 
 	/* Mute all interrupts */
-	writeb_relaxed(HDMI_IH_MUTE_AHBDMAAUD_STAT0_ALL,
-		       dw->data.base + HDMI_IH_MUTE_AHBDMAAUD_STAT0);
+	baikal_hdmi_writeb_relaxed(HDMI_IH_MUTE_AHBDMAAUD_STAT0_ALL,
+		       dw->data.base, HDMI_IH_MUTE_AHBDMAAUD_STAT0);
 
 	free_irq(dw->data.irq, dw);
 
@@ -399,7 +435,7 @@ static int dw_hdmi_prepare(struct snd_pcm_substream *substream)
 {
 	struct snd_pcm_runtime *runtime = substream->runtime;
 	struct snd_dw_hdmi *dw = substream->private_data;
-	u8 threshold, conf0, conf1, ca;
+	u8 threshold, conf0, conf1, layout, ca;
 
 	/* Setup as per 3.0.5 FSL 4.1.0 BSP */
 	switch (dw->revision) {
@@ -435,12 +471,20 @@ static int dw_hdmi_prepare(struct snd_pcm_substream *substream)
 	conf1 = default_hdmi_channel_config[runtime->channels - 2].conf1;
 	ca = default_hdmi_channel_config[runtime->channels - 2].ca;
 
-	writeb_relaxed(threshold, dw->data.base + HDMI_AHB_DMA_THRSLD);
-	writeb_relaxed(conf0, dw->data.base + HDMI_AHB_DMA_CONF0);
-	writeb_relaxed(conf1, dw->data.base + HDMI_AHB_DMA_CONF1);
+	/*
+	 * For >2 channel PCM audio, we need to select layout 1
+	 * and set an appropriate channel map.
+	 */
+	if (runtime->channels > 2)
+		layout = HDMI_FC_AUDSCONF_LAYOUT1;
+	else
+		layout = HDMI_FC_AUDSCONF_LAYOUT0;
 
-	dw_hdmi_set_channel_count(dw->data.hdmi, runtime->channels);
-	dw_hdmi_set_channel_allocation(dw->data.hdmi, ca);
+	baikal_hdmi_writeb_relaxed(threshold, dw->data.base, HDMI_AHB_DMA_THRSLD);
+	baikal_hdmi_writeb_relaxed(conf0, dw->data.base, HDMI_AHB_DMA_CONF0);
+	baikal_hdmi_writeb_relaxed(conf1, dw->data.base, HDMI_AHB_DMA_CONF1);
+	baikal_hdmi_writeb_relaxed(layout, dw->data.base, HDMI_FC_AUDSCONF);
+	baikal_hdmi_writeb_relaxed(ca, dw->data.base, HDMI_FC_AUDICONF2);
 
 	switch (runtime->format) {
 	case SNDRV_PCM_FORMAT_IEC958_SUBFRAME_LE:
@@ -507,7 +551,7 @@ static snd_pcm_uframes_t dw_hdmi_pointer(struct snd_pcm_substream *substream)
 	return bytes_to_frames(runtime, dw->buf_offset);
 }
 
-static const struct snd_pcm_ops snd_dw_hdmi_ops = {
+static struct snd_pcm_ops snd_dw_hdmi_ops = {
 	.open = dw_hdmi_open,
 	.close = dw_hdmi_close,
 	.ioctl = snd_pcm_lib_ioctl,
@@ -529,9 +573,9 @@ static int snd_dw_hdmi_probe(struct platform_device *pdev)
 	unsigned revision;
 	int ret;
 
-	writeb_relaxed(HDMI_IH_MUTE_AHBDMAAUD_STAT0_ALL,
-		       data->base + HDMI_IH_MUTE_AHBDMAAUD_STAT0);
-	revision = readb_relaxed(data->base + HDMI_REVISION_ID);
+	baikal_hdmi_writeb_relaxed(HDMI_IH_MUTE_AHBDMAAUD_STAT0_ALL,
+		       data->base, HDMI_IH_MUTE_AHBDMAAUD_STAT0);
+	revision = baikal_hdmi_readb_relaxed(data->base, HDMI_REVISION_ID);
 	if (revision != 0x0a && revision != 0x1a && revision != 0x2a) {
 		dev_err(dev, "dw-hdmi-audio: unknown revision 0x%02x\n",
 			revision);
@@ -604,6 +648,7 @@ static int snd_dw_hdmi_suspend(struct device *dev)
 	struct snd_dw_hdmi *dw = dev_get_drvdata(dev);
 
 	snd_power_change_state(dw->card, SNDRV_CTL_POWER_D3cold);
+	snd_pcm_suspend_all(dw->pcm);
 
 	return 0;
 }

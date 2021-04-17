@@ -39,3 +39,20 @@ config DRM_DW_MIPI_DSI
 	select DRM_KMS_HELPER
 	select DRM_MIPI_DSI
 	select DRM_PANEL_BRIDGE
+
+config DRM_BAIKAL_HDMI
+	tristate "Baikal-M HDMI transmitter"
+	select DRM_DW_HDMI
+	help
+	  Choose this if you want to use HDMI on Baikal-M.
+
+config DRM_BAIKAL_HDMI_AHB_AUDIO
+	tristate "Baikal-M HDMI Audio interface"
+	depends on DRM_BAIKAL_HDMI && SND
+	select SND_PCM
+	select SND_PCM_ELD
+	select SND_PCM_IEC958
+	help
+	  Support the AHB Audio interface which is part of the
+	  Baikal-M HDMI Tx block.
+
