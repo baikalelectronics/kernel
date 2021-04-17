@@ -209,6 +209,17 @@ config PCIE_ARTPEC6_EP
 	  Enables support for the PCIe controller in the ARTPEC-6 SoC to work in
 	  endpoint mode. This uses the DesignWare core.
 
+config PCI_BAIKAL
+	tristate "Baikal SoC PCIe controller"
+	depends on ARCH_BAIKAL
+	depends on OF && HAS_IOMEM
+	depends on PCI_MSI_IRQ_DOMAIN
+	select PCIE_DW_HOST
+	help
+	  Enables support for the PCIe controller in the Baikal SoC. There are
+	  three instances of PCIe controller in Baikal-M. Two of the controllers
+	  support PCIe 3.0 x4 and the remaining one supports PCIe 3.0 x8.
+
 config PCIE_KIRIN
 	depends on OF && (ARM64 || COMPILE_TEST)
 	bool "HiSilicon Kirin series SoCs PCIe controllers"
