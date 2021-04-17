@@ -169,4 +169,11 @@ config SAMPLE_VFS
 	  as mount API and statx().  Note that this is restricted to the x86
 	  arch whilst it accesses system calls that aren't yet in all arches.
 
+config SAMPLE_BPF
+        bool "Build BPF sample code"
+        depends on HEADERS_INSTALL
+        help
+          Build samples of BPF filters using various methods of
+          BPF filter construction.
+
 endif # SAMPLES
