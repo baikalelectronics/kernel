@@ -138,4 +138,13 @@ config USB_DWC3_QCOM
 	  for peripheral mode support.
 	  Say 'Y' or 'M' if you have one such device.
 
+config USB_DWC3_BAIKAL
+	tristate "Baikal Electronics Platforms"
+	depends on OF
+	default USB_DWC3
+	help
+	  Baikal Electronics SoCs with one DesignWare Core USB3 IP
+	  inside.
+	  Say 'Y' or 'M' if you have one such device.
+
 endif
