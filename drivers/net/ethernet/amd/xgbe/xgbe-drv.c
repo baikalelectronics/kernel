@@ -216,8 +216,15 @@ static int xgbe_alloc_channels(struct xgbe_prv_data *pdata)
 		channel->node = node;
 		cpumask_set_cpu(cpu, &channel->affinity_mask);
 
+#ifndef CONFIG_BAIKAL_XGBE
 		if (pdata->per_channel_irq)
 			channel->dma_irq = pdata->channel_irq[i];
+#else
+		if (pdata->per_channel_irq) {
+			channel->tx_dma_irq = pdata->channel_tx_irq[i];
+			channel->rx_dma_irq = pdata->channel_rx_irq[i];
+		}
+#endif
 
 		if (i < pdata->tx_ring_count) {
 			ring = xgbe_alloc_node(sizeof(*ring), node);
@@ -244,10 +251,22 @@ static int xgbe_alloc_channels(struct xgbe_prv_data *pdata)
 		netif_dbg(pdata, drv, pdata->netdev,
 			  "%s: cpu=%u, node=%d\n", channel->name, cpu, node);
 
+#ifndef CONFIG_BAIKAL_XGBE
 		netif_dbg(pdata, drv, pdata->netdev,
 			  "%s: dma_regs=%p, dma_irq=%d, tx=%p, rx=%p\n",
 			  channel->name, channel->dma_regs, channel->dma_irq,
 			  channel->tx_ring, channel->rx_ring);
+#else
+		netif_dbg(pdata, drv, pdata->netdev,
+			  "%s: dma_regs=%p, tx_dma_irq=%d, tx=%p, rx=%p\n",
+			  channel->name, channel->dma_regs, channel->tx_dma_irq,
+			  channel->tx_ring, channel->rx_ring);
+
+		netif_dbg(pdata, drv, pdata->netdev,
+			  "%s: dma_regs=%p, rx_dma_irq=%d, tx=%p, rx=%p\n",
+			  channel->name, channel->dma_regs, channel->rx_dma_irq,
+			  channel->tx_ring, channel->rx_ring);
+#endif
 	}
 
 	pdata->channel_count = count;
@@ -623,10 +642,16 @@ static irqreturn_t xgbe_dma_isr(int irq, void *data)
 	 */
 	if (napi_schedule_prep(&channel->napi)) {
 		/* Disable Tx and Rx interrupts */
+#ifndef CONFIG_BAIKAL_XGBE
 		if (pdata->channel_irq_mode)
 			xgbe_disable_rx_tx_int(pdata, channel);
 		else
 			disable_irq_nosync(channel->dma_irq);
+#else
+		xgbe_disable_rx_tx_int(pdata, channel);
+		disable_irq_nosync(channel->tx_dma_irq);
+		disable_irq_nosync(channel->rx_dma_irq);
+#endif
 
 		/* Turn on polling */
 		__napi_schedule_irqoff(&channel->napi);
@@ -654,10 +679,17 @@ static void xgbe_tx_timer(struct timer_list *t)
 	if (napi_schedule_prep(napi)) {
 		/* Disable Tx and Rx interrupts */
 		if (pdata->per_channel_irq)
+#ifndef CONFIG_BAIKAL_XGBE
 			if (pdata->channel_irq_mode)
 				xgbe_disable_rx_tx_int(pdata, channel);
 			else
 				disable_irq_nosync(channel->dma_irq);
+#else
+		{
+				disable_irq_nosync(channel->tx_dma_irq);
+				disable_irq_nosync(channel->rx_dma_irq);
+		}
+#endif
 		else
 			xgbe_disable_rx_tx_ints(pdata);
 
@@ -1090,6 +1122,7 @@ static int xgbe_request_irqs(struct xgbe_prv_data *pdata)
 	if (!pdata->per_channel_irq)
 		return 0;
 
+#ifndef CONFIG_BAIKAL_XGBE
 	for (i = 0; i < pdata->channel_count; i++) {
 		channel = pdata->channel[i];
 		snprintf(channel->dma_irq_name,
@@ -1110,6 +1143,61 @@ static int xgbe_request_irqs(struct xgbe_prv_data *pdata)
 				      &channel->affinity_mask);
 	}
 
+	err_dma_irq:
+		/* Using an unsigned int, 'i' will go to UINT_MAX and exit */
+		for (i--; i < pdata->channel_count; i--) {
+			channel = pdata->channel[i];
+
+			irq_set_affinity_hint(channel->dma_irq, NULL);
+			devm_free_irq(pdata->dev, channel->dma_irq, channel);
+		}
+
+		if (pdata->vdata->ecc_support && (pdata->dev_irq != pdata->ecc_irq))
+			devm_free_irq(pdata->dev, pdata->ecc_irq, pdata);
+
+	err_dev_irq:
+		devm_free_irq(pdata->dev, pdata->dev_irq, pdata);
+
+		return ret;
+#else
+	for (i = 0; i < pdata->channel_count; i++) {
+		channel = pdata->channel[i];
+		/* Tx */
+		snprintf(channel->tx_dma_irq_name,
+			 sizeof(channel->tx_dma_irq_name) - 1,
+			 "%s-Tx-%u", netdev_name(netdev),
+			 channel->queue_index);
+
+		ret = devm_request_irq(pdata->dev, channel->tx_dma_irq,
+				       xgbe_dma_isr, 0,
+				       channel->tx_dma_irq_name, channel);
+		if (ret) {
+			netdev_alert(netdev, "error requesting irq %d\n",
+				     channel->tx_dma_irq);
+			goto err_dma_irq;
+		}
+
+		irq_set_affinity_hint(channel->tx_dma_irq,
+						      &channel->affinity_mask);
+
+		/* Rx */
+		snprintf(channel->rx_dma_irq_name,
+			 sizeof(channel->rx_dma_irq_name) - 1,
+			 "%s-Rx-%u", netdev_name(netdev),
+			 channel->queue_index);
+
+		ret = devm_request_irq(pdata->dev, channel->rx_dma_irq,
+				       xgbe_dma_isr, 0,
+				       channel->rx_dma_irq_name, channel);
+		if (ret) {
+			netdev_alert(netdev, "error requesting irq %d\n",
+				     channel->rx_dma_irq);
+			goto err_dma_irq;
+		}
+
+		irq_set_affinity_hint(channel->rx_dma_irq,
+						      &channel->affinity_mask);
+	}
 	return 0;
 
 err_dma_irq:
@@ -1117,8 +1205,10 @@ err_dma_irq:
 	for (i--; i < pdata->channel_count; i--) {
 		channel = pdata->channel[i];
 
-		irq_set_affinity_hint(channel->dma_irq, NULL);
-		devm_free_irq(pdata->dev, channel->dma_irq, channel);
+		devm_free_irq(pdata->dev, channel->tx_dma_irq, channel);
+		devm_free_irq(pdata->dev, channel->rx_dma_irq, channel);
+		irq_set_affinity_hint(channel->tx_dma_irq, NULL);
+		irq_set_affinity_hint(channel->rx_dma_irq, NULL);
 	}
 
 	if (pdata->vdata->ecc_support && (pdata->dev_irq != pdata->ecc_irq))
@@ -1128,6 +1218,7 @@ err_dev_irq:
 	devm_free_irq(pdata->dev, pdata->dev_irq, pdata);
 
 	return ret;
+#endif
 }
 
 static void xgbe_free_irqs(struct xgbe_prv_data *pdata)
@@ -1146,8 +1237,15 @@ static void xgbe_free_irqs(struct xgbe_prv_data *pdata)
 	for (i = 0; i < pdata->channel_count; i++) {
 		channel = pdata->channel[i];
 
+#ifndef CONFIG_BAIKAL_XGBE
 		irq_set_affinity_hint(channel->dma_irq, NULL);
 		devm_free_irq(pdata->dev, channel->dma_irq, channel);
+#else
+		irq_set_affinity_hint(channel->tx_dma_irq, NULL);
+		irq_set_affinity_hint(channel->rx_dma_irq, NULL);
+		devm_free_irq(pdata->dev, channel->tx_dma_irq, channel);
+		devm_free_irq(pdata->dev, channel->rx_dma_irq, channel);
+#endif
 	}
 }
 
@@ -1228,10 +1326,14 @@ static void xgbe_free_rx_data(struct xgbe_prv_data *pdata)
 
 static int xgbe_phy_reset(struct xgbe_prv_data *pdata)
 {
+#ifndef CONFIG_BAIKAL_XGBE
 	pdata->phy_link = -1;
 	pdata->phy_speed = SPEED_UNKNOWN;
 
 	return pdata->phy_if.phy_reset(pdata);
+#else
+	return 0;
+#endif
 }
 
 int xgbe_powerdown(struct net_device *netdev, unsigned int caller)
@@ -2233,7 +2335,12 @@ static void xgbe_poll_controller(struct net_device *netdev)
 	if (pdata->per_channel_irq) {
 		for (i = 0; i < pdata->channel_count; i++) {
 			channel = pdata->channel[i];
+#ifndef CONFIG_BAIKAL_XGBE
 			xgbe_dma_isr(channel->dma_irq, channel);
+#else
+			xgbe_dma_isr(channel->tx_dma_irq, channel);
+			xgbe_dma_isr(channel->rx_dma_irq, channel);
+#endif
 		}
 	} else {
 		disable_irq(pdata->dev_irq);
@@ -2888,10 +2995,16 @@ static int xgbe_one_poll(struct napi_struct *napi, int budget)
 	/* If we processed everything, we are done */
 	if ((processed < budget) && napi_complete_done(napi, processed)) {
 		/* Enable Tx and Rx interrupts */
+#ifndef CONFIG_BAIKAL_XGBE
 		if (pdata->channel_irq_mode)
 			xgbe_enable_rx_tx_int(pdata, channel);
 		else
 			enable_irq(channel->dma_irq);
+#else
+		xgbe_enable_rx_tx_int(pdata, channel);
+		enable_irq(channel->tx_dma_irq);
+		enable_irq(channel->rx_dma_irq);
+#endif
 	}
 
 	DBGPR("<--xgbe_one_poll: received = %d\n", processed);

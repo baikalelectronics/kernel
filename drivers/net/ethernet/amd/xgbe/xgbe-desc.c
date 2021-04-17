@@ -366,8 +366,13 @@ static int xgbe_map_rx_buffer(struct xgbe_prv_data *pdata,
 	}
 
 	if (!ring->rx_buf_pa.pages) {
+#ifdef CONFIG_BAIKAL_XGBE
+		ret = xgbe_alloc_pages(pdata, &ring->rx_buf_pa,
+				       0, ring->node);
+#else
 		ret = xgbe_alloc_pages(pdata, &ring->rx_buf_pa,
 				       PAGE_ALLOC_COSTLY_ORDER, ring->node);
+#endif
 		if (ret)
 			return ret;
 	}

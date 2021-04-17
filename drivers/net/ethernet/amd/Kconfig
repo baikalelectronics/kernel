@@ -202,4 +202,11 @@ config AMD_XGBE_HAVE_ECC
 	bool
 	default n
 
+config BAIKAL_XGBE
+	bool "Baikal XGBE support"
+	default n
+	depends on AMD_XGBE
+	---help---
+	  Say Y to enable Baikal XGBE support
+
 endif # NET_VENDOR_AMD

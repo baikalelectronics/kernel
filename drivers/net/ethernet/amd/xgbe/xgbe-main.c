@@ -121,6 +121,9 @@
 #include <linux/etherdevice.h>
 #include <linux/io.h>
 #include <linux/notifier.h>
+#ifdef CONFIG_BAIKAL_XGBE
+#include <linux/clk.h>
+#endif
 
 #include "xgbe.h"
 #include "xgbe-common.h"
@@ -142,7 +145,11 @@ static void xgbe_default_config(struct xgbe_prv_data *pdata)
 	DBGPR("-->xgbe_default_config\n");
 
 	pdata->blen = DMA_SBMR_BLEN_64;
-	pdata->pbl = DMA_PBL_128;
+#ifdef CONFIG_BAIKAL_XGBE
+	pdata->pbl = DMA_PBL_16;
+#else
+	pdata->pbl = DMA_PBL_256;
+#endif
 	pdata->aal = 1;
 	pdata->rd_osr_limit = 8;
 	pdata->wr_osr_limit = 8;
@@ -330,6 +337,19 @@ int xgbe_config_netdev(struct xgbe_prv_data *pdata)
 	XGMAC_SET_BITS(pdata->rss_options, MAC_RSSCR, TCP4TE, 1);
 	XGMAC_SET_BITS(pdata->rss_options, MAC_RSSCR, UDP4TE, 1);
 
+#ifdef CONFIG_BAIKAL_XGBE
+	ret = clk_prepare_enable(pdata->sysclk);
+	if (ret) {
+		netdev_alert(netdev, "gmac clk_prepare_enable failed\n");
+		return ret;
+	}
+
+	ret = clk_prepare_enable(pdata->ptpclk);
+	if (ret) {
+		netdev_alert(netdev, "dma clk_prepare_enable failed\n");
+		return ret;
+	}
+#endif
 	/* Call MDIO/PHY initialization routine */
 	pdata->debugfs_an_cdr_workaround = pdata->vdata->an_cdr_workaround;
 	ret = pdata->phy_if.phy_init(pdata);

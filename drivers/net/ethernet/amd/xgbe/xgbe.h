@@ -209,6 +209,9 @@
 #define XGBE_SPEEDSET_PROPERTY	"amd,speed-set"
 
 /* Device-tree clock names */
+#ifdef CONFIG_BAIKAL_XGBE
+#define XGBE_AXI_CLOCK          "axi"
+#endif
 #define XGBE_DMA_CLOCK		"dma_clk"
 #define XGBE_PTP_CLOCK		"ptp_clk"
 
@@ -503,8 +506,15 @@ struct xgbe_channel {
 	void __iomem *dma_regs;
 
 	/* Per channel interrupt irq number */
+#ifndef CONFIG_BAIKAL_XGBE
 	int dma_irq;
 	char dma_irq_name[IFNAMSIZ + 32];
+#else
+	int rx_dma_irq;
+	int tx_dma_irq;
+	char rx_dma_irq_name[IFNAMSIZ + 32];
+	char tx_dma_irq_name[IFNAMSIZ + 32];
+#endif
 
 	/* Netdev related settings */
 	struct napi_struct napi;
@@ -1030,6 +1040,11 @@ struct xgbe_prv_data {
 	struct platform_device *phy_platdev;
 	struct device *phy_dev;
 
+#ifdef CONFIG_BAIKAL_XGBE
+	/* phydevice - tranciever */
+	struct phy_device *phydev;
+#endif
+
 	/* Version related data */
 	struct xgbe_version_data *vdata;
 
@@ -1088,6 +1103,10 @@ struct xgbe_prv_data {
 	int ecc_irq;
 	int i2c_irq;
 	int channel_irq[XGBE_MAX_DMA_CHANNELS];
+#ifdef CONFIG_BAIKAL_XGBE
+	int channel_tx_irq[XGBE_MAX_DMA_CHANNELS];
+	int channel_rx_irq[XGBE_MAX_DMA_CHANNELS];
+#endif
 
 	unsigned int per_channel_irq;
 	unsigned int irq_count;
@@ -1325,6 +1344,10 @@ const struct ethtool_ops *xgbe_get_ethtool_ops(void);
 
 #ifdef CONFIG_AMD_XGBE_DCB
 const struct dcbnl_rtnl_ops *xgbe_get_dcbnl_ops(void);
+#endif
+
+#ifdef CONFIG_BAIKAL_XGBE
+void xgbe_init_function_ptrs_phy_baikal(struct xgbe_phy_if *);
 #endif
 
 void xgbe_ptp_register(struct xgbe_prv_data *);

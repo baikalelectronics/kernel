@@ -689,7 +689,9 @@ static void xgbe_enable_dma_interrupts(struct xgbe_prv_data *pdata)
 			 *          per channel interrupts in edge triggered
 			 *          mode)
 			 */
+#ifndef CONFIG_BAIKAL_XGBE
 			if (!pdata->per_channel_irq || pdata->channel_irq_mode)
+#endif
 				XGMAC_SET_BITS(channel->curr_ier,
 					       DMA_CH_IER, TIE, 1);
 		}
@@ -701,7 +703,9 @@ static void xgbe_enable_dma_interrupts(struct xgbe_prv_data *pdata)
 			 *          mode)
 			 */
 			XGMAC_SET_BITS(channel->curr_ier, DMA_CH_IER, RBUE, 1);
+#ifndef CONFIG_BAIKAL_XGBE
 			if (!pdata->per_channel_irq || pdata->channel_irq_mode)
+#endif
 				XGMAC_SET_BITS(channel->curr_ier,
 					       DMA_CH_IER, RIE, 1);
 		}
