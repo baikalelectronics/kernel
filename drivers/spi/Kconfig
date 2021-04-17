@@ -218,6 +218,9 @@ config SPI_DESIGNWARE
 	help
 	  general driver for SPI controller core from DesignWare
 
+config SPI_DIGITALBLOCK_ESPI
+	tristate "DigitalBlock ESPI controller"
+
 config SPI_DW_PCI
 	tristate "PCI interface driver for DW SPI core"
 	depends on SPI_DESIGNWARE && PCI
