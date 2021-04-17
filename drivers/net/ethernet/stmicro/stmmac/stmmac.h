@@ -12,6 +12,8 @@
 #define STMMAC_RESOURCE_NAME   "stmmaceth"
 #define DRV_MODULE_VERSION	"Jan_2016"
 
+#define STMMAC_TX_NEED_RESCHED	(-1)
+
 #include <linux/clk.h>
 #include <linux/if_vlan.h>
 #include <linux/stmmac.h>
@@ -37,6 +39,9 @@ struct stmmac_tx_info {
 	unsigned len;
 	bool last_segment;
 	bool is_jumbo;
+	u8 tx_source_type;
+	void *page_addr;
+	struct page *page;
 };
 
 /* Frequently used values are kept adjacent for cache effect */
@@ -54,6 +59,15 @@ struct stmmac_tx_queue {
 	dma_addr_t dma_tx_phy;
 	u32 tx_tail_addr;
 	u32 mss;
+};
+
+/* For XSK socket */
+struct stmmac_xsk_desc_map {
+	/* For Rx descriptors only */
+	dma_addr_t dma_addr;
+	void *cpu_addr;
+	u64 handle;
+	u32 page_offset;
 };
 
 struct stmmac_rx_buffer {
@@ -82,6 +96,15 @@ struct stmmac_rx_queue {
 		unsigned int len;
 		unsigned int error;
 	} state;
+
+	/* AF_XDP support */
+	struct xdp_rxq_info xdp_rxq;
+	struct zero_copy_allocator zca;
+	/* Buffer info (extra data) is used for XSK */
+	struct stmmac_xsk_desc_map desc_map[DMA_RX_SIZE];
+	struct timer_list rx_init_timer;
+	struct timer_list rx_refill_timer;
+	bool rx_empty;
 };
 
 struct stmmac_channel {
@@ -220,6 +243,7 @@ struct stmmac_priv {
 
 	unsigned long state;
 	struct workqueue_struct *wq;
+	struct workqueue_struct *refill_wq;
 	struct work_struct service_task;
 
 	/* TC Handling */
@@ -234,6 +258,19 @@ struct stmmac_priv {
 
 	/* Receive Side Scaling */
 	struct stmmac_rss rss;
+
+	/* AF_XDP support */
+	struct bpf_prog *xdp_prog;
+	struct xdp_umem **xsk_umems;
+	struct zero_copy_allocator zca;
+	u16 num_xsk_umems_used;
+	u16 num_xsk_umems;
+
+	/* AF_XDP add to start_xmit() asynchronous way of transferring data so add
+	 * locking mechanism to stop competition. Rx lock mechanism is build in
+	 * Rx cleaning function.
+	 */
+	atomic_t tx_lock;
 };
 
 enum stmmac_state {
@@ -242,6 +279,15 @@ enum stmmac_state {
 	STMMAC_RESETING,
 	STMMAC_SERVICE_SCHED,
 };
+
+int stmmac_tx_clean(struct stmmac_priv *priv, int budget, u32 queue);
+int stmmac_hw_restrict_setup(struct net_device *dev, bool init_ptp);
+int init_dma_desc_rings(struct net_device *dev, gfp_t flags);
+void init_dma_rx_desc_rings_xsk(struct net_device *dev);
+void stmmac_stop_all_dma(struct stmmac_priv *priv);
+void stmmac_start_all_dma(struct stmmac_priv *priv);
+void free_dma_rx_desc_resources(struct stmmac_priv *priv);
+int alloc_dma_rx_desc_resources(struct stmmac_priv *priv);
 
 int stmmac_mdio_unregister(struct net_device *ndev);
 int stmmac_mdio_register(struct net_device *ndev);
@@ -258,6 +304,7 @@ int stmmac_dvr_probe(struct device *device,
 		     struct stmmac_resources *res);
 void stmmac_disable_eee_mode(struct stmmac_priv *priv);
 bool stmmac_eee_init(struct stmmac_priv *priv);
+u32 stmmac_rx_dirty(struct stmmac_priv *priv, u32 queue);
 
 #if IS_ENABLED(CONFIG_STMMAC_SELFTESTS)
 void stmmac_selftest_run(struct net_device *dev,
