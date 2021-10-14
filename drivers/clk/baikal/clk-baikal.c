@@ -245,10 +245,9 @@ static int baikal_clk_probe(struct platform_device *pdev)
 	const char *clk_ch_name;
 	const char *parent_name;
 
-	cmu = kmalloc(sizeof(struct baikal_clk_cmu *), GFP_KERNEL);
+	cmu = kzalloc(sizeof(struct baikal_clk_cmu), GFP_KERNEL);
 	if (!cmu) {
 		pr_err("%s: could not allocate CMU clk\n", __func__);
-		kfree(cmu);
 		return -ENOMEM;
 	}
 
