@@ -218,7 +218,7 @@ static long baikal_clk_round_rate(struct clk_hw *hw, unsigned long rate,
 	return res.a0;
 }
 
-const struct clk_ops be_clk_pll_ops = {
+static const struct clk_ops be_clk_pll_ops = {
 	.enable = baikal_clk_enable,
 	.disable = baikal_clk_disable,
 	.is_enabled = baikal_clk_is_enabled,
@@ -227,13 +227,12 @@ const struct clk_ops be_clk_pll_ops = {
 	.round_rate = baikal_clk_round_rate
 };
 
-static int baikal_clk_probe(struct platform_device *pdev)
+static int __init baikal_clk_probe(struct device_node *node)
 {
 	struct clk_init_data init;
 	struct clk_init_data *init_ch;
 	struct baikal_clk_cmu *cmu;
 	struct baikal_clk_cmu **cmu_ch;
-	struct device_node *node = pdev->dev.of_node;
 
 	struct clk *clk;
 	struct clk_onecell_data *clk_ch;
@@ -349,86 +348,20 @@ static int baikal_clk_probe(struct platform_device *pdev)
 			i++;
 		}
 
-		return of_clk_add_provider(pdev->dev.of_node, of_clk_src_onecell_get, clk_ch);
+		return of_clk_add_provider(node, of_clk_src_onecell_get, clk_ch);
 	}
 
-	return of_clk_add_provider(pdev->dev.of_node, of_clk_src_simple_get, clk);
+	return of_clk_add_provider(node, of_clk_src_simple_get, clk);
 }
 
-static int baikal_clk_remove(struct platform_device *pdev)
+static void __init baikal_clk_init(struct device_node *np)
 {
-	of_clk_del_provider(pdev->dev.of_node);
-
-	return 0;
+	int err;
+	err = baikal_clk_probe(np);
+	if (err) {
+		panic("%s: failed to probe clock %pOF: %d\n", __func__, np, err);
+	} else {
+		pr_info("%s: successfully probed %pOF\n", __func__, np);
+	}
 }
-
-static const struct of_device_id baikal_clk_of_match[] = {
-	{ .compatible = "baikal,cmu" },
-	{ /* sentinel */ }
-};
-
-static struct platform_driver clk_avlsp_cmu0_driver = {
-	.probe	= baikal_clk_probe,
-	.remove	= baikal_clk_remove,
-	.driver	= {
-		.name = "baikal-avlsp-cmu0",
-		.of_match_table = baikal_clk_of_match
-	}
-};
-
-static struct platform_driver clk_avlsp_cmu1_driver = {
-	.probe	= baikal_clk_probe,
-	.remove	= baikal_clk_remove,
-	.driver	= {
-		.name = "baikal-avlsp-cmu1",
-		.of_match_table = baikal_clk_of_match
-	}
-};
-
-static struct platform_driver clk_ca57_cmu_driver = {
-	.probe	= baikal_clk_probe,
-	.remove	= baikal_clk_remove,
-	.driver	= {
-		.name = "baikal-ca57_cmu",
-		.of_match_table = baikal_clk_of_match
-	}
-};
-
-static struct platform_driver clk_mali_cmu_driver = {
-	.probe	= baikal_clk_probe,
-	.remove	= baikal_clk_remove,
-	.driver	= {
-		.name = "baikal-mali-cmu",
-		.of_match_table = baikal_clk_of_match
-	}
-};
-
-static struct platform_driver clk_xgbe_cmu0_driver = {
-	.probe	= baikal_clk_probe,
-	.remove	= baikal_clk_remove,
-	.driver	= {
-		.name = "baikal-xgbe-cmu0",
-		.of_match_table = baikal_clk_of_match
-	}
-};
-
-static struct platform_driver clk_xgbe_cmu1_driver = {
-	.probe	= baikal_clk_probe,
-	.remove	= baikal_clk_remove,
-	.driver	= {
-		.name = "baikal-xgbe-cmu1",
-		.of_match_table = baikal_clk_of_match
-	}
-};
-
-module_platform_driver(clk_avlsp_cmu0_driver);
-module_platform_driver(clk_avlsp_cmu1_driver);
-module_platform_driver(clk_ca57_cmu_driver);
-module_platform_driver(clk_mali_cmu_driver);
-module_platform_driver(clk_xgbe_cmu0_driver);
-module_platform_driver(clk_xgbe_cmu1_driver);
-
-MODULE_DESCRIPTION("Baikal-M clock driver");
-MODULE_AUTHOR("Ekaterina Skachko <ekaterina.skachko@baikalelectronics.ru>");
-MODULE_LICENSE("GPL v2");
-MODULE_ALIAS("platform:baikal-cmu");
+CLK_OF_DECLARE_DRIVER(baikal_cmu, "baikal,cmu", baikal_clk_init);
