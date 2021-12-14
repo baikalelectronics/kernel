@@ -679,7 +679,7 @@
 
 		/* USB MM: USB-2 (2C400000, 100000, SPI_267-268_H, SPI_277_H) */
 		usb2: usb2@2C400000 {
-			compatible = "be,baikal-dwc3";
+			compatible = "baikal,baikal-dwc3";
 			status = "disabled";
 			#address-cells = <2>;
 			#size-cells = <2>;
@@ -702,7 +702,7 @@
 
 		/* USB MM: USB-3 (2C500000, 100000, SPI_269-276_H, SPI_278_H) */
 		usb3: usb3@2C500000 {
-			compatible = "be,baikal-dwc3";
+			compatible = "baikal,baikal-dwc3";
 			status = "disabled";
 			#address-cells = <2>;
 			#size-cells = <2>;
